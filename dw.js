@@ -1,70 +1,111 @@
-/**
- * Limitations:
- *   - auto-detection of currentScript is a stack-based hack
- *   - if we buffer multiple docwrites, we miss the write-then-query scenario
- *   - if we output immediately, we can emit invalid HTML
- */
-
 ;(function() {
 
-var waiting = [];
+/** We won't write until these are balanced */
+var pairTags = ["a", "div", "form", "li", "ol", "script", "span", "table", "ul"];
+var openTagRE = new RegExp("<(" + pairTags.join("|") + ")[^a-z]", "gi");
+var closeTagRE = new RegExp("</\\s*(" + pairTags.join("|") + ")[^a-z]", "gi");
 
-/**
- * Get a proper batch of queued document.write calls.
- * Create a new one when necessary.
- */
-var getBatch = function(node) {
-	for (var i=0;i<waiting.length;i++) {
-		var batch = waiting[i];
-		if (batch.node == node) { return batch; }
-	}
-	
-	var batch = {
-		node: node,
-		data: ""
-	};
-	waiting.push(batch);
-
-	setTimeout(function() {
-		var index = waiting.indexOf(batch);
-		waiting.splice(index, 1);
-		writeTo(batch.node, batch.data);
-	}, 0);
-	return batch;
-}
 
 /** Temporary ID counter */
-var count = 0;
+var idCount = 0;
+
+/** Prefix for temporary element IDs */
+var idPrefix = "dw-tmp-";
+
+/** A buffered code; document.write calls might be called with an invalid HTML fragment */
+var CodeBuffer = function(node) {
+	this.node = node;
+	this.code = "";
+
+	var all = this.constructor.all;
+	var self = this;
+
+	setTimeout(function() {
+		var index = all.indexOf(self);
+		all.splice(index, 1);
+		writeTo(self.node, self.code);
+	}, 0);
+}
+
+/** All currently pending buffers */
+CodeBuffer.all = [];
 
 /**
- * Find a proper "parent" node (<script> element) for the current document.write call
+ * Get a proper buffer of queued document.write calls.
+ * Create a new one when necessary.
  */
-var getParent = function() {
-	if (document.write.to) { return document.write.to; }
-//	if (document.currentScript) { return document.currentScript; }
-	var scripts = document.getElementsByTagName("script");
+CodeBuffer.get = function(node) {
+	for (var i=0;i<this.all.length;i++) {
+		var item = this.all[i];
+		if (item.node == node) { return item; }
+	}
+	
+	var item = new this(node);
+	this.all.push(item);
+	return item;
+}
+
+/**
+ * Append a code piece; write when suitable
+ */
+CodeBuffer.prototype.append = function(code) {
+	this.code += code;
+	
+	if (this.isWritable()) {
+		writeTo(this.node, this.code);
+		this.code = "";
+	}
+}
+
+/**
+ * Is this code considered safe to be parsed?
+ */
+CodeBuffer.prototype.isWritable = function() {
+	var openScripts = (this.code.match(openTagRE) || []).length;
+	var closeScripts = (this.code.match(closeTagRE) || []).length;
+	if (openScripts != closeScripts) { return false; }
+
+	return true;
+}
+
+/**
+ * List of sequentially loaded (pending) external scripts. Only one at a time may be loaded, 
+ * because when it executes, we need to have its <script> node accessible (ExternalScripts.current).
+ */
+var ExternalScripts = {
+	current: null,
+	queue: {},
+
+	enqueue: function(scripts) {
+		for (var id in scripts) {
+			this.queue[id] = scripts[id];
+		}
 		
-	try {
-		throw new Error();
-	} catch (e) {
-		var stack = e.stack.split(/@|(?:\s+at\s+)/i);
-		/* must contain at least 0) error, 1) getParent, 2) write, 3) original call site */
-		if (stack.length >= 4) {
-			var file = stack.pop().match(/(.*?)(:[0-9]+)*\n?$/)[1];
-			for (var i=0;i<scripts.length;i++) {
-				var script = scripts[i];
-				if (script.src == file) { return script; }
-			}
+		/* wait until the document parsing is over */
+		setTimeout(function() { ExternalScripts.processQueue(); }, 0);
+	},
+	
+	/**
+	 * Try to load next external script sequentially.
+	 */
+	processQueue: function() {
+		if (this.current) { return; }
+		
+		for (var id in this.queue) {
+			this.current = document.createElement("script");
+			this.current.onload = function() {
+				ExternalScripts.current = null;
+				ExternalScripts.processQueue();
+			};
+			this.current.src = this.queue[id];
 			
+			var tmp = document.getElementById(id);
+			tmp.parentNode.replaceChild(this.current, tmp);
+
+			delete this.queue[id];
+			return;
 		}
 	}
-
-// FF: "write@http://localhost/dw/dw.js:109@http://localhost/dw/3.js:1"
-// Chrome: "TypeError: number is not a function
-//	at HTMLDocument.write (http://localhost/dw/dw.js:115:3) 
-//  at http://localhost/dw/3.js:1:10"
-
-	return (scripts.length ? scripts[scripts.length-1] : document.body);
 }
 
 /**
@@ -75,7 +116,7 @@ var writeTo = function(node, data) {
 	var inline = {};
 
 	var html = data.replace(/<script(.*?)>([\s\S]*?)<\/script>/ig, function(match, tag, code) {
-		var id = "dw-tmp-" + (count++);
+		var id = idPrefix + (idCount++);
 
 		var src = tag.match(/src=['"]?([^\s'"]+)/);
 		if (src) {
@@ -84,50 +125,35 @@ var writeTo = function(node, data) {
 			inline[id] = code;
 		}
 
-		return "<span id='"+id+"'></span>";
+		return "<script id='"+id+"'></script>";
 	});
 	
-	writeToSeparated(node, html, external, inline);
+	writeToSeparated(node, html, inline);
+	ExternalScripts.enqueue(external);
 }
 
 /**
- * Write HTML, external JS and inline JS parts to the parent node
+ * Write HTML and inline JS parts to the parent node
  */
-var writeToSeparated = function(node, html, external, inline) {	
-	/* pres DocumentFragment, neb insertAdjacentHTML je az ve FF 8 */
+var writeToSeparated = function(node, html, inline) {	
+	/* use DocumentFragment; insertAdjacentHTML only in FF >= 8 */
 	var frag = document.createDocumentFragment();
 	var div = document.createElement("div");
 	div.innerHTML = html;
 	while (div.firstChild) { frag.appendChild(div.firstChild); }
 
-	/* FIXME jsou tri varianty: 
-	   - budto je to <script>, pak piseme za nej
-	   - nebo je to docasny span, pak piseme misto nej
-	   - nebo je to externe zadany prvek, pak piseme do nej
-	*/
+	/* For <script> nodes, we insert before them. For other nodes, we append to them. */ 
 	if (node.nodeName.toLowerCase() == "script") {
-		/* FIXME vice zapisu u opakovaneho docwrite prohodi poradi :/ */
-		node.parentNode.insertBefore(frag, node.nextSibling);
-	} else if (node.id.indexOf("dw-tmp-") == 0) {
-		/* FIXME je tohle spravna chvile? ANO, pokud je to bufferovany zapis, protoze uz za nej nikdo psat nebude */
-		node.parentNode.replaceChild(frag, node);
+		node.parentNode.insertBefore(frag, node);
 	} else {
 		node.appendChild(frag);
 	}
 
-	for (var id in external) {
-		var script = document.createElement("script");
-		script.src = external[id];
-		var tmp = document.getElementById(id);
-		tmp.parentNode.replaceChild(script, tmp);
-	}
-	
 	for (var id in inline) {
 		var tmp = document.getElementById(id);
 		document.write.to = tmp;
-		(1,eval)(inline[id]);
+		(1,eval)(inline[id]); /* eval in global scope */
 		document.write.to = null;
-		/* FIXME pokud neni docwrite bufferovany ale okamzity, muzeme ted odstranit tmp - jinak nahore */
 	}
 	
 }
@@ -136,11 +162,23 @@ var writeToSeparated = function(node, html, external, inline) {
  * Our very own document.write
  */
 var write = function() {
-	var parent = getParent();
-	var batch = getBatch(parent);
-	for (var i=0;i<arguments.length;i++) {
-		batch.data += arguments[i];
-	}
+	/*
+	 * Find a proper "parent" node for the current document.write call.
+	 * We can get here from three different document.write callsites:
+	 *   1) plain <script> node in the original document:
+	 *      -> take the last open <script> node
+	 *   2) inline <script> code from another document.write:
+	 *      -> take the document.write.to temporary variable
+	 *   3) external <script> code from another document.write:
+	 *      -> this is a queued call; ExternalScripts.current is it's <script>
+	 */
+	var scripts = document.getElementsByTagName("script");
+	var node = (document.write.to || ExternalScripts.current || scripts[scripts.length-1] || document.body);
+	var buffer = CodeBuffer.get(node);
+	
+	var code = "";
+	for (var i=0;i<arguments.length;i++) { code += arguments[i]; }
+	buffer.append(code);
 }
 
 document.write = write;
