@@ -6,7 +6,7 @@ Experimenting with custom implementation of document.write.
 
 ### 1. Basic usage
 
-Just add a `<script src="dw.js"></script>` in your code and hope for the best.
+Just add a `<script src="dw.js"></script>` to your code and hope for the best.
 Also, keep your fingers crossed; document.write is a very dark magic and
 stuff can go always wrong without warning.
 
