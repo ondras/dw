@@ -28,6 +28,7 @@
 				document.write("<script>");
 				document.write("document.write('<li>4.3</li>')");
 				document.write("</scr" + "ipt>");
+				document.write("</ul></li>");
 			</script>
 
 			<script>
@@ -57,9 +58,10 @@
 		
 		<script>
 			setTimeout(function() {
+//				return;
 				document.write("wtf");
 				document.writeTo(document.getElementById("li1"), "<script src='1.js'></scr" + "ipt>");
-			}, 10);
+			}, 500);
 		</script>
 	</body>
 </html>

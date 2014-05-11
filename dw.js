@@ -1,72 +1,13 @@
+/**
+ * Limitations:
+ *   - external scripts written using document.write are async, not immediately available
+ *   - code written using document.write is buffered in a highly speculative way
+ *   - thou shalt not call document.write while there is an external script load pending
+ */
 ;(function() {
 
 /** We won't write until these are balanced */
 var pairTags = ["a", "div", "form", "li", "ol", "script", "span", "table", "ul"];
-var openTagRE = new RegExp("<(" + pairTags.join("|") + ")[^a-z]", "gi");
-var closeTagRE = new RegExp("</\\s*(" + pairTags.join("|") + ")[^a-z]", "gi");
-
-
-/** Temporary ID counter */
-var idCount = 0;
-
-/** Prefix for temporary element IDs */
-var idPrefix = "dw-tmp-";
-
-/** A buffered code; document.write calls might be called with an invalid HTML fragment */
-var CodeBuffer = function(node) {
-	this.node = node;
-	this.code = "";
-
-	var all = this.constructor.all;
-	var self = this;
-
-	setTimeout(function() {
-		var index = all.indexOf(self);
-		all.splice(index, 1);
-		writeTo(self.node, self.code);
-	}, 0);
-}
-
-/** All currently pending buffers */
-CodeBuffer.all = [];
-
-/**
- * Get a proper buffer of queued document.write calls.
- * Create a new one when necessary.
- */
-CodeBuffer.get = function(node) {
-	for (var i=0;i<this.all.length;i++) {
-		var item = this.all[i];
-		if (item.node == node) { return item; }
-	}
-	
-	var item = new this(node);
-	this.all.push(item);
-	return item;
-}
-
-/**
- * Append a code piece; write when suitable
- */
-CodeBuffer.prototype.append = function(code) {
-	this.code += code;
-	
-	if (this.isWritable()) {
-		writeTo(this.node, this.code);
-		this.code = "";
-	}
-}
-
-/**
- * Is this code considered safe to be parsed?
- */
-CodeBuffer.prototype.isWritable = function() {
-	var openScripts = (this.code.match(openTagRE) || []).length;
-	var closeScripts = (this.code.match(closeTagRE) || []).length;
-	if (openScripts != closeScripts) { return false; }
-
-	return true;
-}
 
 /**
  * List of sequentially loaded (pending) external scripts. Only one at a time may be loaded, 
@@ -77,9 +18,7 @@ var ExternalScripts = {
 	queue: {},
 
 	enqueue: function(scripts) {
-		for (var id in scripts) {
-			this.queue[id] = scripts[id];
-		}
+		for (var id in scripts) { this.queue[id] = scripts[id]; }
 		
 		/* wait until the document parsing is over */
 		setTimeout(function() { ExternalScripts.processQueue(); }, 0);
@@ -92,6 +31,7 @@ var ExternalScripts = {
 		if (this.current) { return; }
 		
 		for (var id in this.queue) {
+			/* We need to create a new one; the old <script> is inactive */
 			this.current = document.createElement("script");
 			this.current.onload = function() {
 				ExternalScripts.current = null;
@@ -108,12 +48,19 @@ var ExternalScripts = {
 	}
 }
 
+/** Temporary ID counter */
+var idCount = 0;
+
+/** Prefix for temporary element IDs */
+var idPrefix = "dw-tmp-";
+
+var currentInlineScript = null;
+
 /**
  * Write all pending data to the parent node
  */
 var writeTo = function(node, data) {
-	var external = {};
-	var inline = {};
+	var inline = {}, external = {};
 
 	var html = data.replace(/<script(.*?)>([\s\S]*?)<\/script>/ig, function(match, tag, code) {
 		var id = idPrefix + (idCount++);
@@ -125,7 +72,7 @@ var writeTo = function(node, data) {
 			inline[id] = code;
 		}
 
-		return "<script id='"+id+"'></script>";
+		return "<span id='"+id+"'></span>";
 	});
 	
 	writeToSeparated(node, html, inline);
@@ -135,7 +82,7 @@ var writeTo = function(node, data) {
 /**
  * Write HTML and inline JS parts to the parent node
  */
-var writeToSeparated = function(node, html, inline) {	
+var writeToSeparated = function(node, html, inline) {
 	/* use DocumentFragment; insertAdjacentHTML only in FF >= 8 */
 	var frag = document.createDocumentFragment();
 	var div = document.createElement("div");
@@ -143,7 +90,7 @@ var writeToSeparated = function(node, html, inline) {
 	while (div.firstChild) { frag.appendChild(div.firstChild); }
 
 	/* For <script> nodes, we insert before them. For other nodes, we append to them. */ 
-	if (node.nodeName.toLowerCase() == "script") {
+	if (node.nodeName.toLowerCase() == "script" || node.id.indexOf(idPrefix) == 0) {
 		node.parentNode.insertBefore(frag, node);
 	} else {
 		node.appendChild(frag);
@@ -151,11 +98,47 @@ var writeToSeparated = function(node, html, inline) {
 
 	for (var id in inline) {
 		var tmp = document.getElementById(id);
-		document.write.to = tmp;
+		currentInlineScript = tmp;
 		(1,eval)(inline[id]); /* eval in global scope */
-		document.write.to = null;
+		currentInlineScript = null;
+		tmp.parentNode.removeChild(tmp);
 	}
 	
+}
+
+/** We have to buffer arguments to document.write and check them for validity/writability */
+var CodeBuffer = {
+	code: "",
+	node: null,
+	openTagRE: new RegExp("<(" + pairTags.join("|") + ")[^a-z]", "gi"),
+	closeTagRE: new RegExp("</\\s*(" + pairTags.join("|") + ")[^a-z]", "gi"),
+	
+	append: function(node, code) {
+		/* reset whatever was remaining in the code buffer */
+		if (this.node != node) { 
+			this.code = "";
+			this.node = node; 
+		}
+		
+		this.code += code;
+
+		if (this.isWritable()) {
+			var code = this.code;
+			this.code = "";
+			writeTo(this.node, code);
+		}
+	},
+
+	/**
+	 * Is this code considered safe to be parsed?
+	 */
+	isWritable: function() {
+		var openScripts = (this.code.match(this.openTagRE) || []).length;
+		var closeScripts = (this.code.match(this.closeTagRE) || []).length;
+		if (openScripts != closeScripts) { return false; }
+
+		return true;
+	}
 }
 
 /**
@@ -173,12 +156,11 @@ var write = function() {
 	 *      -> this is a queued call; ExternalScripts.current is it's <script>
 	 */
 	var scripts = document.getElementsByTagName("script");
-	var node = (document.write.to || ExternalScripts.current || scripts[scripts.length-1] || document.body);
-	var buffer = CodeBuffer.get(node);
-	
+	var node = (currentInlineScript || ExternalScripts.current || scripts[scripts.length-1] || document.body);
+
 	var code = "";
 	for (var i=0;i<arguments.length;i++) { code += arguments[i]; }
-	buffer.append(code);
+	CodeBuffer.append(node, code);
 }
 
 document.write = write;
