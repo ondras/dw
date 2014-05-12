@@ -32,16 +32,28 @@ var ExternalScripts = {
 		
 		for (var id in this.queue) {
 			/* We need to create a new one; the old <script> is inactive */
-			this.current = document.createElement("script");
-			this.current.onload = function() {
+			var script = document.createElement("script");
+
+			var onload = function() {
+				script.onload = script.onreadystatechange = null;
 				ExternalScripts.current = null;
 				ExternalScripts.processQueue();
-			};
-			this.current.src = this.queue[id];
+			}
+
+			if ("onload" in script) {
+				script.onload = onload;
+			} else {
+				script.onreadystatechange = function() {
+					if (script.readyState == "loaded") { onload(); }
+				}
+			}
+
+			script.src = this.queue[id];
 			
 			var tmp = document.getElementById(id);
-			tmp.parentNode.replaceChild(this.current, tmp);
+			tmp.parentNode.replaceChild(script, tmp);
 
+			this.current = script;
 			delete this.queue[id];
 			return;
 		}
