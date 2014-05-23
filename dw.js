@@ -6,8 +6,8 @@
  */
 ;(function() {
 
-/** We won't write until these are balanced */
-var pairTags = ["a", "div", "form", "li", "ol", "script", "span", "table", "ul"];
+var emptyTags = "area,base,basefont,br,col,frame,hr,img,input,isindex,link,meta,param,embed".split(",");
+var selfCloseTags = "colgroup,dd,dt,li,options,p,td,tfoot,th,thead,tr".split(",");
 
 /**
  * List of sequentially loaded (pending) external scripts. Only one at a time may be loaded, 
@@ -77,7 +77,7 @@ var writeTo = function(node, data) {
 	var html = data.replace(/<script(.*?)>([\s\S]*?)<\/script>/ig, function(match, tag, code) {
 		var id = idPrefix + (idCount++);
 
-		var src = tag.match(/src=['"]?([^\s'"]+)/);
+		var src = tag.match(/src=['"]?([^\s'"]+)/i);
 		if (src) {
 			external[id] = src[1];
 		} else {
@@ -122,8 +122,6 @@ var writeToSeparated = function(node, html, inline) {
 var CodeBuffer = {
 	code: "",
 	node: null,
-	openTagRE: new RegExp("<(" + pairTags.join("|") + ")[^a-z]", "gi"),
-	closeTagRE: new RegExp("</\\s*(" + pairTags.join("|") + ")[^a-z]", "gi"),
 	
 	append: function(node, code) {
 		/* reset whatever was remaining in the code buffer */
@@ -145,9 +143,26 @@ var CodeBuffer = {
 	 * Is this code considered safe to be parsed?
 	 */
 	isWritable: function() {
-		var openScripts = (this.code.match(this.openTagRE) || []).length;
-		var closeScripts = (this.code.match(this.closeTagRE) || []).length;
-		if (openScripts != closeScripts) { return false; }
+		var openTags = this.code.match(/<[a-z0-9-]/ig) || [];
+		var closeTags = this.code.match(/<\/[a-z0-9-]/ig) || [];
+
+		var openCount = 0;
+		for (var i=0;i<openTags.length;i++) {
+			var name = openTags[i].substring(1).toLowerCase();
+			/* Ignore empty tags (they have no close counterpart). Ignore self-close tags as well, we have no idea whether they are closed. */
+			if (emptyTags.indexOf(name) > -1 || selfCloseTags.indexOf(name) > -1) { continue; }
+			openCount++;
+		}
+
+		var closeCount = 0;
+		for (var i=0;i<closeTags.length;i++) {
+			var name = closeTags[i].substring(1).toLowerCase();
+			/* Empty tags cannot appear here. Ignore self-close tags, they do not signify anything. */
+			if (selfCloseTags.indexOf(name) > -1) { continue; }
+			closeCount++;
+		}
+
+		if (openCount != closeCount) { return false; }
 
 		return true;
 	}
