@@ -143,8 +143,8 @@ var CodeBuffer = {
 	 * Is this code considered safe to be parsed?
 	 */
 	isWritable: function() {
-		var openTags = this.code.match(/<[a-z0-9-]/ig) || [];
-		var closeTags = this.code.match(/<\/[a-z0-9-]/ig) || [];
+		var openTags = this.code.match(/<[a-z0-9-]+/ig) || [];
+		var closeTags = this.code.match(/<\/[a-z0-9-]+/ig) || [];
 
 		var openCount = 0;
 		for (var i=0;i<openTags.length;i++) {
@@ -156,7 +156,7 @@ var CodeBuffer = {
 
 		var closeCount = 0;
 		for (var i=0;i<closeTags.length;i++) {
-			var name = closeTags[i].substring(1).toLowerCase();
+			var name = closeTags[i].substring(2).toLowerCase();
 			/* Empty tags cannot appear here. Ignore self-close tags, they do not signify anything. */
 			if (selfCloseTags.indexOf(name) > -1) { continue; }
 			closeCount++;
