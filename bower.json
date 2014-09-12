@@ -13,6 +13,7 @@
   ],
   "license": "Public Domain",
   "ignore": [
-    "*"
+    "*",
+    "!bower.json"
   ]
 }
