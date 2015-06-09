@@ -73,18 +73,20 @@ var currentInlineScript = null;
  */
 var writeTo = function(node, data) {
 	var inline = {}, external = {};
+	var srcRE = /src=['"]?([^\s'"]+)/i;
 
 	var html = data.replace(/<script(.*?)>([\s\S]*?)<\/script>/ig, function(match, tag, code) {
 		var id = idPrefix + (idCount++);
 
-		var src = tag.match(/src=['"]?([^\s'"]+)/i);
+		var src = tag.match(srcRE);
 		if (src) {
 			external[id] = src[1];
 		} else {
 			inline[id] = code;
 		}
 
-		return "<span id='"+id+"'></span>";
+		var script = ("<script" + tag + "></script>").replace(srcRE, "");
+		return "<span id='"+id+"'></span>" + script;
 	});
 	
 	writeToSeparated(node, html, inline);
@@ -113,7 +115,7 @@ var writeToSeparated = function(node, html, inline) {
 		currentInlineScript = tmp;
 		(1,eval)(inline[id]); /* eval in global scope */
 		currentInlineScript = null;
-		tmp.parentNode.removeChild(tmp);
+		tmp.parentNode && tmp.parentNode.removeChild(tmp);
 	}
 	
 }
