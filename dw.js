@@ -15,10 +15,13 @@ var selfCloseTags = "colgroup,dd,dt,li,options,p,td,tfoot,th,thead,tr".split(","
  */
 var ExternalScripts = {
 	current: null,
-	queue: {},
+	queue: {
+		local: [], /* requested during processing the current <script> block */
+		global: [] /* requested earlier */
+	},
 
 	enqueue: function(scripts) {
-		for (var id in scripts) { this.queue[id] = scripts[id]; }
+		this.queue.local = this.queue.local.concat(scripts);
 		
 		/* wait until the document parsing is over */
 		setTimeout(function() { ExternalScripts.processQueue(); }, 0);
@@ -30,33 +33,34 @@ var ExternalScripts = {
 	processQueue: function() {
 		if (this.current) { return; }
 		
-		for (var id in this.queue) {
-			/* We need to create a new one; the old <script> is inactive */
-			var script = document.createElement("script");
+		while (this.queue.local.length) { this.queue.global.unshift(this.queue.local.pop()); }
+		if (!this.queue.global.length) { return; }
 
-			var onload = function() {
-				script.onload = script.onreadystatechange = null;
-				ExternalScripts.current = null;
-				ExternalScripts.processQueue();
-			}
+		var obj = this.queue.global.shift();
 
-			if ("onload" in script) {
-				script.onload = onload;
-			} else {
-				script.onreadystatechange = function() {
-					if (script.readyState == "loaded") { onload(); }
-				}
-			}
+		/* We need to create a new one; the old <script> is inactive */
+		var script = document.createElement("script");
 
-			script.src = this.queue[id];
-			
-			var tmp = document.getElementById(id);
-			tmp.parentNode.replaceChild(script, tmp);
-
-			this.current = script;
-			delete this.queue[id];
-			return;
+		var onload = function() {
+			script.onload = script.onreadystatechange = null;
+			ExternalScripts.current = null;
+			ExternalScripts.processQueue();
 		}
+
+		if ("onload" in script) {
+			script.onload = onload;
+		} else {
+			script.onreadystatechange = function() {
+				if (script.readyState == "loaded") { onload(); }
+			}
+		}
+
+		script.src = obj.src;
+
+		var tmp = document.getElementById(obj.id);
+		tmp.parentNode.replaceChild(script, tmp);
+
+		this.current = script;
 	}
 }
 
@@ -72,7 +76,7 @@ var currentInlineScript = null;
  * Write all pending data to the parent node
  */
 var writeTo = function(node, data) {
-	var inline = {}, external = {};
+	var inline = {}, external = [];
 	var srcRE = /src=['"]?([^\s'"]+)/i;
 
 	var html = data.replace(/<script(.*?)>([\s\S]*?)<\/script>/ig, function(match, tag, code) {
@@ -80,7 +84,7 @@ var writeTo = function(node, data) {
 
 		var src = tag.match(srcRE);
 		if (src) {
-			external[id] = src[1];
+			external.push({id:id, src:src[1]});
 		} else {
 			inline[id] = code;
 		}
