@@ -42,13 +42,14 @@ var ExternalScripts = {
 		var script = document.createElement("script");
 
 		var onload = function() {
-			script.onload = script.onreadystatechange = null;
+			script.onload = script.onerror = script.onreadystatechange = null;
 			ExternalScripts.current = null;
 			ExternalScripts.processQueue();
 		}
 
 		if ("onload" in script) {
 			script.onload = onload;
+			script.onerror = onload;
 		} else {
 			script.onreadystatechange = function() {
 				if (script.readyState == "loaded") { onload(); }
@@ -186,7 +187,7 @@ var write = function() {
 	 *   2) inline <script> code from another document.write:
 	 *      -> take the document.write.to temporary variable
 	 *   3) external <script> code from another document.write:
-	 *      -> this is a queued call; ExternalScripts.current is it's <script>
+	 *      -> this is a queued call; ExternalScripts.current is its <script>
 	 */
 	var scripts = document.getElementsByTagName("script");
 	var node = (currentInlineScript || ExternalScripts.current || scripts[scripts.length-1] || document.body);
