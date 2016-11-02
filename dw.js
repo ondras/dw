@@ -6,11 +6,11 @@
  */
 ;(function() {
 
-var emptyTags = "area,base,basefont,br,col,frame,hr,img,input,isindex,link,meta,param,embed".split(",");
+var emptyTags = "area,base,basefont,br,col,frame,hr,img,input,isindex,link,meta,param,embed,source".split(",");
 var selfCloseTags = "colgroup,dd,dt,li,options,p,td,tfoot,th,thead,tr".split(",");
 
 /**
- * List of sequentially loaded (pending) external scripts. Only one at a time may be loaded, 
+ * List of sequentially loaded (pending) external scripts. Only one at a time may be loaded,
  * because when it executes, we need to have its <script> node accessible (ExternalScripts.current).
  */
 var ExternalScripts = {
@@ -22,17 +22,17 @@ var ExternalScripts = {
 
 	enqueue: function(scripts) {
 		this.queue.local = this.queue.local.concat(scripts);
-		
+
 		/* wait until the document parsing is over */
 		setTimeout(function() { ExternalScripts.processQueue(); }, 0);
 	},
-	
+
 	/**
 	 * Try to load next external script sequentially.
 	 */
 	processQueue: function() {
 		if (this.current) { return; }
-		
+
 		while (this.queue.local.length) { this.queue.global.unshift(this.queue.local.pop()); }
 		if (!this.queue.global.length) { return; }
 
@@ -93,7 +93,7 @@ var writeTo = function(node, data) {
 		var script = ("<script" + tag + "></script>").replace(srcRE, "");
 		return "<span id='"+id+"'></span>" + script;
 	});
-	
+
 	writeToSeparated(node, html, inline);
 	ExternalScripts.enqueue(external);
 }
@@ -108,7 +108,7 @@ var writeToSeparated = function(node, html, inline) {
 	div.innerHTML = html;
 	while (div.firstChild) { frag.appendChild(div.firstChild); }
 
-	/* For <script> nodes, we insert before them. For other nodes, we append to them. */ 
+	/* For <script> nodes, we insert before them. For other nodes, we append to them. */
 	if (node.nodeName.toLowerCase() == "script" || node.id.indexOf(idPrefix) == 0) {
 		node.parentNode.insertBefore(frag, node);
 	} else {
@@ -122,21 +122,21 @@ var writeToSeparated = function(node, html, inline) {
 		currentInlineScript = null;
 		tmp.parentNode && tmp.parentNode.removeChild(tmp);
 	}
-	
+
 }
 
 /** We have to buffer arguments to document.write and check them for validity/writability */
 var CodeBuffer = {
 	code: "",
 	node: null,
-	
+
 	append: function(node, code) {
 		/* reset whatever was remaining in the code buffer */
-		if (this.node != node) { 
+		if (this.node != node) {
 			this.code = "";
-			this.node = node; 
+			this.node = node;
 		}
-		
+
 		this.code += code;
 
 		if (this.isWritable()) {
@@ -150,14 +150,15 @@ var CodeBuffer = {
 	 * Is this code considered safe to be parsed?
 	 */
 	isWritable: function() {
-		var openTags = this.code.match(/<[a-z0-9-]+/ig) || [];
+		var openTags = this.code.match(/<[a-z0-9-]+[\s>]/ig) || [];
 		var closeTags = this.code.match(/<\/[a-z0-9-]+/ig) || [];
 
 		var openCount = 0;
 		for (var i=0;i<openTags.length;i++) {
 			var name = openTags[i].substring(1).toLowerCase();
 			/* Ignore empty tags (they have no close counterpart). Ignore self-close tags as well, we have no idea whether they are closed. */
-			if (emptyTags.indexOf(name) > -1 || selfCloseTags.indexOf(name) > -1) { continue; }
+			var n = name.substring(0,name.length-1);
+			if (emptyTags.indexOf(n) > -1 || selfCloseTags.indexOf(n) > -1) { continue; }
 			openCount++;
 		}
 
@@ -198,6 +199,9 @@ var write = function() {
 }
 
 document.write = write;
+document.writeln = write;
 document.writeTo = writeTo;
-	
+
 })();
+
+/******************************************************************************/
