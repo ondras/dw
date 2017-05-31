@@ -104,6 +104,7 @@ var writeToHTML = function(node, html) {
 var writeTo = function(node, data) {
 	var scripts = [];
 	var srcRE = /src=['"]?([^\s'"]+)/i;
+	var srcRemoveRE = /src=['"]?([^\s'"]+['"]?)/i;
 
 	var html = data.replace(/<script(.*?)>([\s\S]*?)<\/script>/ig, function(match, tag, code) {
 		var id = idPrefix + (idCount++);
@@ -115,7 +116,7 @@ var writeTo = function(node, data) {
 			scripts.push({type:"inline", id:id, code:code});
 		}
 
-		var script = ("<script" + tag + "></script>").replace(srcRE, "");
+		var script = ("<script" + tag + "></script>").replace(srcRemoveRE, "");
 		return "<span id='"+id+"'></span>" + script;
 	});
 
@@ -148,8 +149,10 @@ var CodeBuffer = {
 	 * Is this code considered safe to be parsed?
 	 */
 	isWritable: function() {
-		var openTags = this.code.match(/<[a-z0-9-]+[\s>]/ig) || [];
-		var closeTags = this.code.match(/<\/[a-z0-9-]+/ig) || [];
+		// remove scripts as they can provide false positives
+		var code = this.code.replace(/<script[\s\S]*?<\/script>/gi, "");
+		var openTags = code.match(/<[a-z0-9-]+[\s>]/ig) || [];
+		var closeTags = code.match(/<\/[a-z0-9-]+/ig) || [];
 
 		var openCount = 0;
 		for (var i=0;i<openTags.length;i++) {
