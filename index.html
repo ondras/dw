@@ -3,6 +3,16 @@
 	<head>
 		<meta charset="utf-8" />
 		<script src="dw.js"></script>
+		<script>
+			if (!Array.prototype.indexOf) {
+				Array.prototype.indexOf = function(_) {
+					for (var i=0; i<this.length; i++) {
+						if (this[i] === _) { return i; }
+					}
+					return -1;
+				}
+			}
+		</script>
 		<!-- 
 		<script src="/git/postscribe/htmlParser/htmlParser.js"></script>
 		<script src="/git/postscribe/postscribe.js"></script>
@@ -55,7 +65,17 @@
 				document.write("<li>12<input /></li>");
 			</script>
 
-			<li>13</li>
+			<script>
+				document.write("<script src='13.js'></scr" + "ipt>");
+				document.write("<script>document.write('<li>' + window.var13 + '</li>');</scr" + "ipt>");
+			</script>
+
+			<script>
+				document.write("<script>var var14 = 14;</scr" + "ipt>");
+				document.write("<script>document.write('<li>' + var14 + '</li>');</scr" + "ipt>");
+			</script>
+
+			<li>15</li>
 		</ul>
 		
 		<script>

@@ -10,10 +10,10 @@ var emptyTags = "area,base,basefont,br,col,frame,hr,img,input,isindex,link,meta,
 var selfCloseTags = "colgroup,dd,dt,li,options,p,td,tfoot,th,thead,tr".split(",");
 
 /**
- * List of sequentially loaded (pending) external scripts. Only one at a time may be loaded,
- * because when it executes, we need to have its <script> node accessible (ExternalScripts.current).
+ * List of sequentially loaded (pending) scripts. Only one at a time may be loaded/executed,
+ * because when it executes, we need to have its <script> node accessible (Scripts.current).
  */
-var ExternalScripts = {
+var Scripts = {
 	current: null,
 	queue: {
 		local: [], /* requested during processing the current <script> block */
@@ -24,11 +24,11 @@ var ExternalScripts = {
 		this.queue.local = this.queue.local.concat(scripts);
 
 		/* wait until the document parsing is over */
-		setTimeout(function() { ExternalScripts.processQueue(); }, 0);
+		setTimeout(function() { Scripts.processQueue(); }, 0);
 	},
 
 	/**
-	 * Try to load next external script sequentially.
+	 * Try to load next {external,inline} script sequentially.
 	 */
 	processQueue: function() {
 		if (this.current) { return; }
@@ -36,32 +36,41 @@ var ExternalScripts = {
 		while (this.queue.local.length) { this.queue.global.unshift(this.queue.local.pop()); }
 		if (!this.queue.global.length) { return; }
 
-		var obj = this.queue.global.shift();
+		var script = this.queue.global.shift();
+		var parent = document.getElementById(script.id);
 
-		/* We need to create a new one; the old <script> is inactive */
-		var script = document.createElement("script");
+		switch (script.type) {
+			case "external":
+				var node = document.createElement("script");
+				this.current = node;
 
-		var onload = function() {
-			script.onload = script.onerror = script.onreadystatechange = null;
-			ExternalScripts.current = null;
-			ExternalScripts.processQueue();
+				var onload = function() {
+					node.onload = node.onerror = node.onreadystatechange = null;
+					Scripts.current = null;
+					Scripts.processQueue();
+				}
+
+				if ("onload" in node) {
+					node.onload = onload;
+					node.onerror = onload;
+				} else {
+					node.onreadystatechange = function() {
+						if (node.readyState == "loaded") { onload(); }
+					}
+				}
+
+				node.src = script.src;
+				parent.parentNode.replaceChild(node, parent);
+			break;
+
+			case "inline":
+				Scripts.current = parent;
+				(1,eval)(script.code); /* eval in global scope */
+				Scripts.current = null;
+				parent.parentNode && parent.parentNode.removeChild(parent);
+				Scripts.processQueue();
+			break;
 		}
-
-		if ("onload" in script) {
-			script.onload = onload;
-			script.onerror = onload;
-		} else {
-			script.onreadystatechange = function() {
-				if (script.readyState == "loaded") { onload(); }
-			}
-		}
-
-		script.src = obj.src;
-
-		var tmp = document.getElementById(obj.id);
-		tmp.parentNode.replaceChild(script, tmp);
-
-		this.current = script;
 	}
 }
 
@@ -71,37 +80,10 @@ var idCount = 0;
 /** Prefix for temporary element IDs */
 var idPrefix = "dw-tmp-";
 
-var currentInlineScript = null;
-
 /**
- * Write all pending data to the parent node
+ * Write HTML parts to the parent node
  */
-var writeTo = function(node, data) {
-	var inline = {}, external = [];
-	var srcRE = /src=['"]?([^\s'"]+)/i;
-
-	var html = data.replace(/<script(.*?)>([\s\S]*?)<\/script>/ig, function(match, tag, code) {
-		var id = idPrefix + (idCount++);
-
-		var src = tag.match(srcRE);
-		if (src) {
-			external.push({id:id, src:src[1]});
-		} else {
-			inline[id] = code;
-		}
-
-		var script = ("<script" + tag + "></script>").replace(srcRE, "");
-		return "<span id='"+id+"'></span>" + script;
-	});
-
-	writeToSeparated(node, html, inline);
-	ExternalScripts.enqueue(external);
-}
-
-/**
- * Write HTML and inline JS parts to the parent node
- */
-var writeToSeparated = function(node, html, inline) {
+var writeToHTML = function(node, html) {
 	/* use DocumentFragment; insertAdjacentHTML only in FF >= 8 */
 	var frag = document.createDocumentFragment();
 	var div = document.createElement("div");
@@ -114,15 +96,31 @@ var writeToSeparated = function(node, html, inline) {
 	} else {
 		node.appendChild(frag);
 	}
+}
 
-	for (var id in inline) {
-		var tmp = document.getElementById(id);
-		currentInlineScript = tmp;
-		(1,eval)(inline[id]); /* eval in global scope */
-		currentInlineScript = null;
-		tmp.parentNode && tmp.parentNode.removeChild(tmp);
-	}
+/**
+ * Write all pending data to the parent node
+ */
+var writeTo = function(node, data) {
+	var scripts = [];
+	var srcRE = /src=['"]?([^\s'"]+)/i;
 
+	var html = data.replace(/<script(.*?)>([\s\S]*?)<\/script>/ig, function(match, tag, code) {
+		var id = idPrefix + (idCount++);
+
+		var src = tag.match(srcRE);
+		if (src) {
+			scripts.push({type:"external", id:id, src:src[1]});
+		} else {
+			scripts.push({type:"inline", id:id, code:code});
+		}
+
+		var script = ("<script" + tag + "></script>").replace(srcRE, "");
+		return "<span id='"+id+"'></span>" + script;
+	});
+
+	writeToHTML(node, html);
+	Scripts.enqueue(scripts);
 }
 
 /** We have to buffer arguments to document.write and check them for validity/writability */
@@ -186,12 +184,12 @@ var write = function() {
 	 *   1) plain <script> node in the original document:
 	 *      -> take the last open <script> node
 	 *   2) inline <script> code from another document.write:
-	 *      -> take the document.write.to temporary variable
+	 *      -> this is a queued call; Scripts.current is its <script> FIXME
 	 *   3) external <script> code from another document.write:
-	 *      -> this is a queued call; ExternalScripts.current is its <script>
+	 *      -> this is a queued call; Scripts.current is its <script>
 	 */
 	var scripts = document.getElementsByTagName("script");
-	var node = (currentInlineScript || ExternalScripts.current || scripts[scripts.length-1] || document.body);
+	var node = (Scripts.current || scripts[scripts.length-1] || document.body);
 
 	var code = "";
 	for (var i=0;i<arguments.length;i++) { code += arguments[i]; }
